@@ -1,0 +1,769 @@
+import discord
+import time
+import asyncio
+import psycopg2
+import random
+import discord
+from discord.ext import commands
+
+
+from discord.ui import Button, View
+TOKEN = 'your_token'
+
+id_log_channel = 1336338801378725978
+id_loverooms_creator_channel = 1336407267842723940
+id_mute_role = 1337166793013330010
+id_ban_role = 1337177455282225172
+id_pred_role = 1337180157479223407
+
+
+bot = commands.Bot(command_prefix='!', intents = discord.Intents.all()) 
+
+# Уведомление о запуске бота
+@bot.event
+async def on_ready():
+    print(f'Logged in as {bot.user.name} ({bot.user.id})')
+
+# Проверка работоспособности бота
+@bot.command()
+async def ping(ctx):
+    await ctx.response.send_message('pong')
+
+@bot.command()
+async def helpp(ctx):
+    button_eco = Button(label='Экономика')
+    button_mod = Button(label='Модерация')
+
+    button_list = View()
+    button_list.add_item(button_eco)
+    button_list.add_item(button_mod)
+
+    async def ModCallback (interaction: discord.Integration):
+        embed= discord.Embed(title="Cписок команд модерации", 
+                    description=f"", 
+                    color=discord.Color.blue())
+        embed.add_field(name='', value='!clear <кол-во> - удаляет сообщения', inline=False)
+        embed.add_field(name='', value='!arrole user role - выдача/снятие роли', inline=False)
+        embed.add_field(name='', value='!mute user time reason <кол-во> - выдача мута', inline=False)
+        embed.add_field(name='', value='!unmute user - снятие мута', inline=False)
+        embed.add_field(name='', value='!ban user reason - выдача бана', inline=False)
+        embed.add_field(name='', value='!unban user - снятие бана', inline=False)
+        embed.add_field(name='', value='!pred user reason - выдача преда', inline=False)
+        embed.add_field(name='', value='!unpred user - снятие преда', inline=False)
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+        await interaction.response.edit_message(embed = embed, view = button_list)
+    
+    async def EcoCallback (interaction: discord.Integration):
+        embed= discord.Embed(title="Cписок команд экономики", 
+                    description=f"", 
+                    color=discord.Color.blue())
+        embed.add_field(name='', value='!profile user - просмотр профиля пользователя', inline=False)
+        embed.add_field(name='', value='!lprofile user - просмотр лаврумы пользователя', inline=False)
+        embed.add_field(name='', value='!deposit <кол-во>  - перевести монеты на счет лаврумы', inline=False)
+        embed.add_field(name='', value='!history user - история нарушений', inline=False)
+        embed.add_field(name='', value='!award user <кол-во>  - выдача монет', inline=False)
+        embed.add_field(name='', value='!take user <кол-во> - снятие монет', inline=False)
+        embed.add_field(name='', value='!coinflip <кол-во> <0 or 1> - игра в монетку', inline=False)
+        embed.add_field(name='', value='!marry user - предложение брака', inline=False)
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+        await interaction.response.edit_message(embed = embed, view = button_list)
+    
+    button_mod.callback = ModCallback
+    button_eco.callback = EcoCallback
+    embed= discord.Embed(title="Выберите интересующие вас команды", 
+                    description=f"", 
+                    color=discord.Color.blue())
+    embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+    await ctx.send(embed = embed, view = button_list)
+
+    await ctx.message.delete()
+
+#------------------------------------------------------------------
+#------------------------------ЭКОНОМИКА---------------------------
+#------------------------------------------------------------------
+
+# Добавление в БД новых пользователей
+@bot.event
+async def on_member_join(member:discord.member):
+    conn = psycopg2.connect(dbname="history", host="127.0.0.1", user="postgres", password="postgres", port="5432")
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(f"SELECT id FROM profile_user where id = '{member.id}'")
+        new_list = cursor.fetchone()[0]
+        print(new_list)
+    except:
+        query = f"INSERT INTO profile_user (id, online, message, money, time_join, love_room, love_id)VALUES({member.id},'0', '0', '0', {time.time()+7200}, '0', '0');"
+        cursor.execute(query)
+        conn.commit()
+    
+    conn.close()
+
+# Просмотр профиля пользователя
+@bot.command()
+async def profile(ctx, member: discord.Member = '0'):
+    if member == '0':
+        member = ctx.author
+
+    conn = psycopg2.connect(dbname="history", host="127.0.0.1", user="postgres", password="postgres", port="5432")
+    cursor = conn.cursor()
+
+    query = f"SELECT id, message, love_id, online, money FROM profile_user where id = '{member.id}'"
+    cursor.execute(query)
+    id_user, message, love_id, online, money = cursor.fetchone()
+    love_room = '0'
+    if love_id != 0:
+        query = f"SELECT one_id, two_id FROM love_rooms where id = {love_id}"
+        cursor.execute(query)
+        one_id, two_id = cursor.fetchone()
+
+        if one_id == id_user:
+            love_room = two_id
+        else:
+            love_room = one_id
+
+    embed= discord.Embed(title=f"Профиль {member}", 
+                        description=f"Общий онлайн {online}\nБаланс {money}\n Сообщений {message}\nПартнер {'отсутствует' if love_id == 0 else f"<@{love_room}>"}", 
+                        color=discord.Color.blue())
+    embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+    await ctx.send(embed=embed)
+
+    conn.close()
+
+    await ctx.message.delete()
+
+@bot.command()
+async def deposit(ctx, money: int):
+    conn = psycopg2.connect(dbname="history", host="127.0.0.1", user="postgres", password="postgres", port="5432")
+    cursor = conn.cursor()
+
+    query = f"SELECT money, love_id FROM profile_user where id = '{ctx.author.id}'"
+    cursor.execute(query)
+    user_money, love_id = cursor.fetchone()
+    if love_id != 0:
+        if money > user_money:
+            await ctx.send("Недостаточно средв на балансе", delete_after = 3) 
+        else:
+            query = f"UPDATE profile_user SET money = money - {money} where id = '{ctx.author.id}'"
+            cursor.execute(query)
+
+            query = f"UPDATE love_rooms SET love_money = love_money + {money} where id = {love_id}"
+            cursor.execute(query)
+            conn.commit()
+
+            embed= discord.Embed(title=f"Пополнение баланса лав румы", 
+                            description=f"<@{ctx.author.id}> пополнил баланс лав румы на {money}", 
+                            color=discord.Color.blue())
+            embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+            await ctx.send(embed=embed)
+    else:
+        await ctx.send("У вас нет лав румы", delete_after = 3) 
+
+    conn.close()
+
+    await ctx.message.delete()
+
+# Просмотр истории нарушений пользователя
+@bot.command()
+async def history(ctx, member: discord.Member = '0'):
+    if member == '0':
+        member = ctx.author
+    
+    conn = psycopg2.connect(dbname="history", host="127.0.0.1", user="postgres", password="postgres", port="5432")
+    cursor = conn.cursor()
+
+    query = f"SELECT author_id, reason, time, type FROM history_user where user_id = '{member.id}'"
+    cursor.execute(query)
+    user_punishments = cursor.fetchall()
+    if len(user_punishments) == 0:
+        embed= discord.Embed(title=f"История нарушений | {member}", 
+                description=f"Пользователь еще не нарушал", 
+                color=discord.Color.blue())
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+        await ctx.send(embed=embed) 
+
+    elif len(user_punishments) > 6:
+        button_right = Button(label='>')
+        button_left = Button(label='<')
+
+        button_list = View()
+        button_list.add_item(button_right)
+        button_list.add_item(button_left)
+    else:
+        print("2")
+        i = 0
+        number_and_date = ''
+        reason = ''
+        author_id = ''
+        mute_count = 0
+        ban_count = 0
+        while i < len(user_punishments):
+            punishment = user_punishments[i]
+
+            if punishment[3] == 'mute':
+                type_ = '🟥'
+                mute_count = mute_count + 1
+            elif punishment[3] == 'ban':
+                type_ = '🚫'
+                ban_count = ban_count + 1
+            elif punishment[3] == 'pred':
+                type_ = '⚡'
+            i_count = '#**' + str(i+1) + '**'
+            i = i + 1
+            number_and_date = number_and_date + i_count + type_ + f"<t:{punishment[2]}:d>" + '\n'
+            reason = reason + f'{punishment[1]}' + '\n'
+            author_id = author_id + f"<@{punishment[0]}>" + '\n'
+
+        embed= discord.Embed(title=f"История нарушений | {member}", 
+                description=f"За все время {mute_count} мута, {ban_count} бан", 
+                color=discord.Color.blue())
+        embed.add_field(name = '```Номер / Дата```', value=number_and_date, inline=True)
+        embed.add_field(name = '```Причина```', value=reason, inline=True)
+        embed.add_field(name = '```Исполитель```', value=author_id, inline=True)
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+
+        print(author_id)
+        await ctx.send(embed=embed)
+
+    conn.close()
+
+    await ctx.message.delete()
+
+# Просмотр лав профиля пользователя
+@bot.command()
+async def lprofile(ctx, member: discord.Member = '0'):
+    if member == '0':
+        member = ctx.author
+    
+    conn = psycopg2.connect(dbname="history", host="127.0.0.1", user="postgres", password="postgres", port="5432")
+    cursor = conn.cursor()
+
+    query = f"SELECT love_id FROM profile_user where id = '{member.id}'"
+    cursor.execute(query)
+    love_id = cursor.fetchone()[0]
+
+    query = f"SELECT one_id, two_id, love_online, love_money, date_create FROM love_rooms where id = {love_id}"
+    cursor.execute(query)
+    one_id, two_id, love_online, love_money, data_create = cursor.fetchone()
+
+    one_user = ctx.guild.get_member(int(one_id))
+    two_user = ctx.guild.get_member(int(two_id))
+
+    days = int((time.time() - int(data_create)) / 3600 / 24)
+    time_create = time.gmtime(int(data_create))
+    time_create = time.strftime('%d.%m.%Y',time_create)
+
+    embed= discord.Embed(title=f"Лав профиль {one_user} и {two_user}", 
+                        description=f"Общий онлайн {love_online}\nБаланс {love_money}\n Дней {days}\n Дата создания {time_create}", 
+                        color=discord.Color.blue())
+    embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+    await ctx.send(embed=embed)
+
+    conn.close()
+
+    await ctx.message.delete()
+
+# Выдача монеток
+@bot.command()
+@commands.has_any_role(1336343109587435551)
+async def award(ctx, member: discord.Member, money: int):
+    conn = psycopg2.connect(dbname="history", host="127.0.0.1", user="postgres", password="postgres", port="5432")
+    cursor = conn.cursor()
+
+    query = f"UPDATE profile_user SET money = money + {money} WHERE id = '{member.id}' "
+    cursor.execute(query, vars=None)
+    conn.commit() 
+
+    embed= discord.Embed(title="Выдача монеток", 
+                    description=f"<@{ctx.author.id}> выдал <@{member.id}> {money} монеток", 
+                    color=discord.Color.blue())
+    embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+    await ctx.send(embed = embed)
+
+    conn.close()
+
+    await ctx.message.delete()
+
+# Снятие монеток
+@bot.command()
+@commands.has_any_role(1336343109587435551)
+async def take(ctx, member: discord.Member, money: int):
+    conn = psycopg2.connect(dbname="history", host="127.0.0.1", user="postgres", password="postgres", port="5432")
+    cursor = conn.cursor()
+
+    query = f"UPDATE profile_user SET money = money - {money} WHERE id = '{member.id}' "
+    cursor.execute(query, vars=None)
+    conn.commit() 
+
+    embed= discord.Embed(title="Снятие монеток", 
+                    description=f"<@{ctx.author.id}> забра у <@{member.id}> {money} монеток", 
+                    color=discord.Color.blue())
+    embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+    await ctx.send(embed = embed)
+
+    conn.close()
+
+    await ctx.message.delete()
+
+# Игра в монетку
+@bot.command()
+@commands.has_any_role(1336343109587435551)
+async def coinflip(ctx, money: int, rand: int):
+    conn = psycopg2.connect(dbname="history", host="127.0.0.1", user="postgres", password="postgres", port="5432")
+    cursor = conn.cursor()
+
+    query = f"SELECT money FROM profile_user WHERE id = '{ctx.author.id}' "
+    cursor.execute(query, vars=None)
+    money_user = cursor.fetchone()[0]
+
+    if money_user < money:
+        await ctx.send("Недостаточно средств", delete_after = 3)
+    else:
+        random_ = random.randint(0, 1)
+        if rand == random_:
+            money = money * 2
+
+            query = f"UPDATE profile_user SET money = money + {money} WHERE id = '{ctx.author.id}' "
+            cursor.execute(query, vars=None)
+            conn.commit() 
+
+            embed= discord.Embed(title="Монетка", 
+                    description=f"Выпало {random_}, вы выиграли {money}", 
+                    color=discord.Color.blue())
+            embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+            await ctx.send(embed = embed)
+        else:
+            query = f"UPDATE profile_user SET money = money - {money} WHERE id = '{ctx.author.id}' "
+            cursor.execute(query, vars=None)
+            conn.commit() 
+
+            embed= discord.Embed(title="Монетка", 
+                    description=f"Выпало {random_}, вы проиграли {money}", 
+                    color=discord.Color.blue())
+            embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+            await ctx.send(embed = embed)
+
+    conn.close()
+
+    await ctx.message.delete()
+
+# Предложить создать ЛР
+@bot.command()
+async def marry(ctx, member: discord.Member):
+
+    conn = psycopg2.connect(dbname="history", host="127.0.0.1", user="postgres", password="postgres", port="5432")
+    cursor = conn.cursor()
+
+    query = f"SELECT love_id, money FROM profile_user where id = '{ctx.author.id}'"
+    cursor.execute(query)
+    love_author, money = cursor.fetchone()
+
+    query = f"SELECT love_id FROM profile_user where id = '{member.id}'"
+    cursor.execute(query)
+    love_member = cursor.fetchone()[0]
+
+    if love_author != 0:
+        await ctx.send(f"У вас уже есть лав рума", delete_after = 3)
+    elif love_member != 0:
+        await ctx.send(f"У человека уже есть лаврума", delete_after = 3)
+    elif ctx.author.id == member.id:
+        await ctx.send(f"Нельзя сделать предложение самому себе", delete_after = 3)
+    elif money < 1000:
+        await ctx.send(f"Недостаточно монеток", delete_after = 3)
+    else: 
+        embed= discord.Embed(title="Создние лав румы", 
+                    description=f"<@{ctx.author.id}> сделал предлоежние <@{member.id}>", 
+                    color=discord.Color.blue())
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+        msg = await ctx.send(embed = embed)
+        button_yes = Button(label='✅')
+        button_no = Button(label='🚫')
+
+        button_list = View()
+        button_list.add_item(button_yes)
+        button_list.add_item(button_no)
+
+        async def YesCallback (interaction: discord.Integration):
+            button_list.clear_items()
+            await interaction.response.edit_message(content= "Вы приняли предложение",view = button_list)
+            
+            time_now = int(time.time())
+            query = f"INSERT INTO love_rooms (one_id, two_id, love_online, love_money, days, date_create)VALUES('{ctx.author.id}','{member.id}','0','0', '0','{time_now}'); "
+            cursor.execute(query, vars=None)
+
+            query = f"SELECT id FROM love_rooms WHERE one_id = '{ctx.author.id}' and two_id = '{member.id}'"
+            cursor.execute(query, vars=None)
+            id_love = cursor.fetchone()[0]
+
+            query = f"UPDATE profile_user SET love_id = {id_love} WHERE id = '{ctx.author.id}' OR id = '{member.id}' "
+            cursor.execute(query, vars=None)
+
+            conn.commit() 
+
+            embed= discord.Embed(title="Создние лав румы", 
+                        description=f"<@{ctx.author.id}> и <@{member.id}> успешно создали лавруму", 
+                        color=discord.Color.blue())
+            await msg.edit(embed = embed)
+
+        async def NoCallback (interaction: discord.Integration):
+            button_list.clear_items()
+            await interaction.response.edit_message(content= "Вы отклонили предложение",view = button_list)
+
+        button_yes.callback = YesCallback
+        button_no.callback = NoCallback
+
+        await member.send(f"<@{ctx.author.id}> предлогает вам создать лавруму", view=button_list)
+
+    conn.close()
+
+    await ctx.message.delete()
+
+# Подсчет времени нахождения в войсе 
+@bot.event
+async def on_voice_state_update(member: discord.Member, before, after):
+    conn = psycopg2.connect(dbname="history", host="127.0.0.1", user="postgres", password="postgres", port="5432")
+    cursor = conn.cursor()
+    if before.channel is None and after.channel is not None:
+        time_join = int(time.time())
+
+        query = f"UPDATE profile_user SET time_join_voice = {time_join} WHERE id = '{member.id}'"
+        cursor.execute(query)
+    elif before.channel is not None and after.channel is None:
+        time_exit = int(time.time())
+        
+        query = f"SELECT time_join_voice FROM profile_user WHERE id = '{member.id}'"
+        cursor.execute(query, vars=None)
+        time_join = cursor.fetchone()[0]
+
+        query = f"SELECT online FROM profile_user WHERE id = '{member.id}'"
+        cursor.execute(query, vars=None)
+        time_online = cursor.fetchone()[0]
+
+        time_online = int(time_online) + time_exit - int(time_join)
+        query = f"UPDATE profile_user SET online = {time_online} WHERE id = '{member.id}'"
+        cursor.execute(query, vars=None)
+
+        conn.commit() 
+    
+    channel = bot.get_channel(id_loverooms_creator_channel)
+    #if after.channel == channel:
+        
+    conn.close()
+
+#------------------------------------------------------------------
+#------------------------------МОДЕРАЦИЯ---------------------------
+#------------------------------------------------------------------
+
+# Удаление сообщений в чате
+@bot.command( pass_context = True )
+@commands.has_any_role(1336343109587435551)
+async def clear(ctx, amount = 1 ):
+    if amount < 1 or amount > 100:
+        await ctx.send("Количество сообщений должно быть от 1 до 100", delete_after = 3)
+        await ctx.message.delete()
+    else:
+        channel = bot.get_channel(id_log_channel)
+        await ctx.message.delete()
+        await ctx.channel.purge( limit = amount )
+        # Реакция на команду
+        embed= discord.Embed(title="Удаление сообщений", 
+                            description=f"Было удалено {amount} сообщений", 
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+        await ctx.send(embed=embed, delete_after = 3)
+        # Лог результата команды
+        embed= discord.Embed(title="Удаление сообщений", 
+                            description=f"<@{ctx.author.id}> удалил {amount} сообщений в канале <#{ctx.channel.id}>", 
+                            color=discord.Color.blue())
+        await channel.send(embed=embed)
+
+# Выдача/снятие роли пользователю
+@bot.command()
+@commands.has_any_role(1336343109587435551)
+async def arrole(ctx, member: discord.Member, role: discord.Role):
+    channel = bot.get_channel(id_log_channel)
+    # Проверка позиции найвысшей роли инициатора команды и роли которую он выдет
+    if ctx.guild.roles.index(ctx.author.roles[len(ctx.author.roles)-1]) > ctx.guild.roles.index(role):
+        # Проверка на наличие роли у пользователя
+        if role not in member.roles:
+            await member.add_roles(role)
+            # Реакция на команду
+            embed= discord.Embed(title="Выдача роли", 
+                                description=f"Роль <@&{role.id}> была выдана пользователю <@{member.id}>", 
+                                color=discord.Color.blue())
+            await ctx.send(embed=embed)
+            # Лог резульатат команды
+            embed= discord.Embed(title="Выдача роли", 
+                                description=f"<@{ctx.author.id}> выдал роль <@&{role.id}> у пользователя <@{member.id}>", 
+                                color=discord.Color.blue())
+            await channel.send(embed=embed)
+        else:
+            await member.remove_roles(role)
+            # Реакция на команду
+            embed= discord.Embed(title="Снятие роли", 
+                                description=f"Роль <@&{role.id}> была снята у пользователя <@{member.id}>", 
+                                color=discord.Color.blue())
+            await ctx.send(embed=embed)
+            # Лог резульатат команды
+            embed= discord.Embed(title="Снятие роли", 
+                                description=f"<@{ctx.author.id}> снял роль <@&{role.id}> у пользователя <@{member.id}>",
+                                color=discord.Color.blue())
+            await channel.send(embed=embed)
+    else:
+        await ctx.send(f"Ваша позиция в стафе ниже указаной роли", delete_after = 3)
+
+    await ctx.message.delete()
+
+# Выдача мута
+@bot.command()
+@commands.has_any_role(1336343109587435551)
+async def mute(ctx, member: discord.Member, time_mute: int, reason):
+
+    conn = psycopg2.connect(dbname="history", host="127.0.0.1", user="postgres", password="postgres", port="5432")
+    cursor = conn.cursor()
+
+    role = ctx.guild.get_role(id_mute_role)
+    role_pred = ctx.guild.get_role(id_pred_role)
+    if role not in member.roles:
+        channel = bot.get_channel(id_log_channel)
+        # Выдача мута
+        embed= discord.Embed(title="Выдача мута", 
+                            description=f"Пользователю <@{member.id}> выдали мут!\nВремя пробывания в муте: {time_mute} минут\n```Причина: {reason}!```",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+        await ctx.send(embed=embed)
+        # Сообщение в лс о муте
+        embed= discord.Embed(title="Выдача мута", 
+                            description=f"Вам выдали мут на {time_mute} минут\n```Причина: {reason}!```",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"{ctx.guild.name} • {ctx.author.name}",icon_url = ctx.author.avatar)
+        await member.send(embed=embed)
+        # Лог мута
+        embed= discord.Embed(title="Выдача мута", 
+                            description=f"Модератор <@{ctx.author.id}> выдал мут пользоватеою <@{member.id}> на {time_mute} минут\n```Причина: {reason}!```",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+        await channel.send(embed=embed)
+        if role_pred in member.roles:
+            await member.remove_roles(role_pred)
+        await member.add_roles(role)
+
+        query = f"INSERT INTO history_user (user_id, author_id, reason, time, type)VALUES('{member.id}','{ctx.author.id}','{reason}','{int(time.time())}', 'mute'); "
+        cursor.execute(query, vars=None)
+
+        conn.commit()
+        conn.close()
+
+        await asyncio.sleep(int(time_mute * 60))
+        print("123")
+        if role in member.roles:
+            # Сообщение в лс о снятии муте
+            embed= discord.Embed(title="Снятие мута", 
+                                description=f"Время мута истекло, наказание снято",
+                                color=discord.Color.blue())
+            embed.set_footer(text=f"{ctx.guild.name} • {ctx.author.name}",icon_url = ctx.author.avatar)
+            await member.send(embed=embed)
+            # Лог анмута
+            embed= discord.Embed(title="Снятие мута", 
+                            description=f"Время мута у пользователя <@{member.id}> истекло, наказание снято",
+                            color=discord.Color.blue())
+            embed.set_footer(text=ctx.author.name,icon_url = ctx.author.avatar)
+            await channel.send(embed=embed)
+            await member.remove_roles(role)
+    else:
+        await ctx.send(f"У пользователя уже есть мут", delete_after = 5)
+
+    await ctx.message.delete()
+
+# Снятие мута
+@bot.command()
+@commands.has_any_role(1336343109587435551)
+async def unmute(ctx, member: discord.Member):
+    role = ctx.guild.get_role(id_mute_role)
+    if role in member.roles:
+        channel = bot.get_channel(id_log_channel)
+        # Снятие мута
+        embed= discord.Embed(title="Снятие мута", 
+                            description=f"Мут у полюзователя <@{member.id}> был снят",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+        await ctx.send(embed=embed)
+        # Сообщение в лс о снятии мумта
+        embed= discord.Embed(title="Снятие мута", 
+                            description=f"Мут был снят",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"{ctx.guild.name} • {ctx.author.name}",icon_url = ctx.author.avatar)
+        await member.send(embed=embed)
+        # Лог анмута
+        embed= discord.Embed(title="Снятие мута", 
+                            description=f"<@{ctx.author.id}> снял мут пользователю <@{member.id}>",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+        await channel.send(embed=embed)
+        await member.remove_roles(role)
+    else:
+        await ctx.send(f"У пользователя нету мута", delete_after = 5)
+
+    await ctx.message.delete()
+
+# Выдача бана
+@bot.command()
+@commands.has_any_role(1336343109587435551)
+async def ban(ctx, member: discord.Member, reason):
+
+    conn = psycopg2.connect(dbname="history", host="127.0.0.1", user="postgres", password="postgres", port="5432")
+    cursor = conn.cursor()
+
+    role = ctx.guild.get_role(id_ban_role)
+    if role not in member.roles:
+        channel = bot.get_channel(id_log_channel)
+        # Выдача бана
+        embed= discord.Embed(title="Выдача бана", 
+                            description=f"Пользователю <@{member.id}> выдали бан!\n```Причина: {reason}!```",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+        await ctx.send(embed=embed)
+        # Сообщение в лс о бане
+        embed= discord.Embed(title="Выдача бана", 
+                            description=f"Вам выдали бан```Причина: {reason}!```",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"{ctx.guild.name} • {ctx.author.name}",icon_url = ctx.author.avatar)
+        await member.send(embed=embed)
+        # Лог бана
+        embed= discord.Embed(title="Выдача бана", 
+                            description=f"Модератор <@{ctx.author.id}> выдал бан пользоватеою <@{member.id}>\n```Причина: {reason}!```",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+        await channel.send(embed=embed)
+        await member.add_roles(role)
+
+        query = f"INSERT INTO history_user (user_id, author_id, reason, time, type)VALUES('{member.id}','{ctx.author.id}','{reason}','{int(time.time())}', 'ban'); "
+        cursor.execute(query, vars=None)
+
+        conn.commit()
+        conn.close()
+    else:
+        await ctx.send(f"У пользователя уже есть бан", delete_after = 5)
+
+    await ctx.message.delete()
+
+# Снятие бана
+@bot.command()
+@commands.has_any_role(1336343109587435551)
+async def unban(ctx, member: discord.Member):
+    role = ctx.guild.get_role(id_ban_role)
+    if role in member.roles:
+        channel = bot.get_channel(id_log_channel)
+        # Снятие бана
+        embed= discord.Embed(title="Снятие бана", 
+                            description=f"Бан у полюзователя <@{member.id}> был снят",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+        await ctx.send(embed=embed)
+        # Сообщение в лс о снятии бана
+        embed= discord.Embed(title="Снятие бана", 
+                            description=f"Бан был снят",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"{ctx.guild.name} • {ctx.author.name}",icon_url = ctx.author.avatar)
+        await member.send(embed=embed)
+        # Лог анбана
+        embed= discord.Embed(title="Снятие бана", 
+                             description=f"<@{ctx.author.id}> снял бан пользователю <@{member.id}>",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+        await channel.send(embed=embed)
+        await member.remove_roles(role)
+    else:
+        await ctx.send(f"У пользователя нету бана", delete_after = 5)
+
+    await ctx.message.delete()
+
+# Выдача преда
+@bot.command()
+@commands.has_any_role(1336343109587435551)
+async def pred(ctx, member: discord.Member, reason):
+
+    conn = psycopg2.connect(dbname="history", host="127.0.0.1", user="postgres", password="postgres", port="5432")
+    cursor = conn.cursor()
+
+    role = ctx.guild.get_role(id_pred_role)
+    if role not in member.roles:
+        channel = bot.get_channel(id_log_channel)
+        # Выдача преда
+        embed= discord.Embed(title="Выдача предупреждения", 
+                            description=f"Пользователю <@{member.id}> выдали предупреждение на 12 часов!\n```Причина: {reason}!```",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+        await ctx.send(embed=embed)
+        # Сообщение в лс о преде
+        embed= discord.Embed(title="Выдача предупреждения", 
+                            description=f"Вам выдали предупреждение на 12 часов```Причина: {reason}!```",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"{ctx.guild.name} • {ctx.author.name}",icon_url = ctx.author.avatar)
+        await member.send(embed=embed)
+        # Лог преда
+        embed= discord.Embed(title="Выдача предупреждения", 
+                             description=f"Модератор <@{ctx.author.id}> выдал предупреждение на 12 часаов пользоватеою <@{member.id}>\n```Причина: {reason}!```",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+        await channel.send(embed=embed)
+        await member.add_roles(role)
+
+        query = f"INSERT INTO history_user (user_id, author_id, reason, time, type)VALUES('{member.id}','{ctx.author.id}','{reason}','{int(time.time())}', 'pred'); "
+        cursor.execute(query, vars=None)
+
+        conn.commit()
+        conn.close()
+
+        await asyncio.sleep(12 * 3600)
+        if role in member.roles:
+            # Сообщение в лс о снятии преда
+            embed= discord.Embed(title="Снятие предупреждения", 
+                                description=f"Время предупреждения истекло, наказание снято",
+                                color=discord.Color.blue())
+            embed.set_footer(text=ctx.guild.name)
+            await member.send(embed=embed)
+            # Лог анпреда
+            embed= discord.Embed(title="Снятие предупреждения", 
+                             description=f"Время предупреждения у пользователя <@{member.id}> истекло, наказание снято",
+                            color=discord.Color.blue())
+            embed.set_footer(text=ctx.author.name,icon_url = ctx.author.avatar)
+            await channel.send(embed=embed)
+            await member.remove_roles(role)
+    else:
+        await ctx.send(f"У пользователя уже есть пред", delete_after = 5)
+
+    await ctx.message.delete()
+
+# Снятие преда
+@bot.command()
+@commands.has_any_role(1336343109587435551)
+async def unpred(ctx, member: discord.Member):
+    role = ctx.guild.get_role(id_pred_role)
+    if role in member.roles:
+        channel = bot.get_channel(id_log_channel)
+        # Снятие преда
+        embed= discord.Embed(title="Снятие предупреждения", 
+                            description=f"Предупрежедние у полюзователя <@{member.id}> было снято",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+        await ctx.send(embed=embed)
+        # Сообщение в лс о снятии преда
+        embed= discord.Embed(title="Снятие предупреждения", 
+                            description=f"Предупреждение было снято",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"{ctx.guild.name} • {ctx.author.name}",icon_url = ctx.author.avatar)
+        await member.send(embed=embed)
+        # Лог анпреда
+        embed= discord.Embed(title="Снятие предупреждения", 
+                            description=f"<@{ctx.author.id}> снял предупреждение пользователю <@{member.id}>",
+                            color=discord.Color.blue())
+        embed.set_footer(text=f"Выполнил {ctx.author.name}",icon_url = ctx.author.avatar)
+        await channel.send(embed=embed)
+        await member.remove_roles(role)
+    else:
+        await ctx.send(f"У пользователя нету предупреждения", delete_after = 5)
+
+    await ctx.message.delete()
+
+bot.run(TOKEN)
